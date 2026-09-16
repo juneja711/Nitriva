@@ -43,10 +43,24 @@ def video_feed():
 
 @app.route("/api/telemetry")
 def get_telemetry():
-    """Real-time AI telemetry: gaze coordinates, EAR, gesture, face detection."""
+    """Real-time AI telemetry: gaze coordinates, EAR, gesture, face detection, calibration."""
     telemetry = engine.get_telemetry()
     telemetry["app_state"] = app_state
     return jsonify(telemetry)
+
+@app.route("/api/start_calibration", methods=["POST"])
+def start_calibration():
+    """Triggers the dual-phase 5-point calibration."""
+    engine.start_calibration()
+    voice.speak("Starting optics calibration. Look at the green target dots.")
+    return jsonify({"status": "started", "calib_phase": engine.calib_phase})
+
+@app.route("/api/skip_calibration", methods=["POST"])
+def skip_calibration():
+    """Skips calibration and enables default tracking."""
+    engine.skip_calibration()
+    voice.speak("Calibration skipped. Tracking ready.")
+    return jsonify({"status": "skipped", "calib_phase": engine.calib_phase})
 
 @app.route("/api/synthesize", methods=["POST"])
 def synthesize():

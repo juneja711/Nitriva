@@ -11,10 +11,55 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
   <style>
     body { font-family: 'Inter', system-ui, sans-serif; }
-    .hud-active { ring: 4px solid #10B981; transform: scale(1.02); }
+    @keyframes pulse-ring {
+      0% { transform: scale(0.9); opacity: 0.8; }
+      50% { transform: scale(1.3); opacity: 0.4; }
+      100% { transform: scale(0.9); opacity: 0.8; }
+    }
+    .calib-pulse { animation: pulse-ring 1.2s infinite ease-in-out; }
   </style>
 </head>
-<body class="bg-[#F8FAFC] text-slate-900 h-screen w-screen flex overflow-hidden select-none">
+<body class="bg-[#F8FAFC] text-slate-900 h-screen w-screen flex overflow-hidden select-none relative">
+
+  <!-- ========================================================= -->
+  <!-- FULLSCREEN DUAL-PHASE CALIBRATION OVERLAY -->
+  <!-- ========================================================= -->
+  <div id="calibration-overlay" class="fixed inset-0 z-[2000] flex flex-col items-center justify-center transition-colors duration-700 select-none bg-white">
+    <!-- Face Lost Alert -->
+    <div id="calib-error-banner" class="hidden absolute top-10 left-1/2 -translate-x-1/2 bg-rose-600 text-white px-6 py-3 rounded-2xl font-bold shadow-2xl flex items-center gap-3 animate-bounce z-50">
+      <svg class="w-6 h-6 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+      <span id="calib-error-text">Face Lost! Align face in camera.</span>
+    </div>
+
+    <!-- SETUP CARD (Initial prompt) -->
+    <div id="calib-setup-card" class="w-full max-w-lg text-center p-12 bg-white/95 backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-slate-100 flex flex-col items-center relative text-slate-900">
+      <div class="w-20 h-20 bg-emerald-50 rounded-3xl flex items-center justify-center text-emerald-600 mb-6 shadow-inner">
+        <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+      </div>
+      <h2 class="text-3xl font-extrabold tracking-tight mb-3">Optics Calibration</h2>
+      <p class="text-slate-500 font-medium text-base mb-8 leading-relaxed">
+        Nitriva uses AI computer vision to track your gaze. Please center your face in the camera and follow the green target dots.
+      </p>
+      <div class="flex flex-col w-full gap-3">
+        <button onclick="startCalibration()" class="w-full py-4 bg-emerald-600 text-white rounded-2xl font-extrabold text-lg hover:bg-emerald-700 active:scale-[0.98] transition-all shadow-xl shadow-emerald-600/25">
+          Start Calibration
+        </button>
+        <button onclick="skipCalibration()" class="w-full py-3 text-slate-500 hover:text-slate-800 font-bold text-sm transition">
+          Skip (Use Default Tracking)
+        </button>
+      </div>
+    </div>
+
+    <!-- ACTIVE CALIBRATION DOT -->
+    <div id="calib-target" class="hidden absolute transition-all duration-500 -translate-x-1/2 -translate-y-1/2" style="top: 50%; left: 50%;">
+      <div class="w-12 h-12 rounded-full bg-emerald-500 shadow-[0_0_40px_#10B981] border-4 border-white calib-pulse"></div>
+    </div>
+
+    <!-- ACTIVE CALIBRATION TEXT (Look Bottom Right...) -->
+    <p id="calib-instruction" class="hidden absolute bottom-16 w-full text-center text-3xl font-extrabold tracking-tight text-slate-800">
+      1. LOOK AT CENTER <span id="calib-phase-pill" class="text-emerald-500 font-mono text-xl">(Phase: Light Mode)</span>
+    </p>
+  </div>
   
   <!-- Left Sidebar -->
   <aside class="w-[320px] bg-white border-r border-slate-100 p-6 flex flex-col justify-between z-20 shadow-[4px_0_24px_rgba(0,0,0,0.02)] h-full shrink-0">
@@ -43,6 +88,10 @@
         <button id="nav-ctrl" onclick="setRoute('/control')" class="w-full flex items-center gap-4 px-4 py-3.5 rounded-xl font-bold text-sm transition-all duration-200 text-slate-500 hover:bg-slate-50 hover:text-slate-900">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
           <span>Device Control</span>
+        </button>
+        <button onclick="startCalibration()" class="w-full flex items-center gap-4 px-4 py-3 rounded-xl font-bold text-xs text-emerald-600 bg-emerald-50 hover:bg-emerald-100 transition mt-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+          <span>Recalibrate Optics</span>
         </button>
       </nav>
     </div>
@@ -117,12 +166,12 @@
         </div>
 
         <!-- Module 3: System Prefs -->
-        <div onclick="setRoute('/settings')" id="card-3" class="dash-card bg-white border-2 border-slate-100 rounded-[2rem] p-8 flex flex-col justify-center cursor-pointer transition-all duration-300 hover:border-slate-300 shadow-sm">
+        <div onclick="startCalibration()" id="card-3" class="dash-card bg-white border-2 border-slate-100 rounded-[2rem] p-8 flex flex-col justify-center cursor-pointer transition-all duration-300 hover:border-slate-300 shadow-sm">
           <div class="w-14 h-14 rounded-2xl bg-slate-800 text-white flex items-center justify-center mb-5 shadow-lg shadow-slate-800/20">
-            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/></svg>
+            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
           </div>
-          <h2 class="text-2xl font-extrabold text-slate-900 mb-1">System Prefs</h2>
-          <p class="text-sm font-medium text-slate-500">Optics recalibration & volume</p>
+          <h2 class="text-2xl font-extrabold text-slate-900 mb-1">Recalibrate Optics</h2>
+          <p class="text-sm font-medium text-slate-500">Run 5-point Light & Dark calibration</p>
         </div>
       </div>
     </div>
@@ -191,6 +240,14 @@
       document.getElementById('nav-ctrl').className = route === '/control' ? 'w-full flex items-center gap-4 px-4 py-3.5 rounded-xl font-bold text-sm bg-slate-900 text-white shadow-lg' : 'w-full flex items-center gap-4 px-4 py-3.5 rounded-xl font-bold text-sm text-slate-500 hover:bg-slate-50';
     }
 
+    async function startCalibration() {
+      await fetch('/api/start_calibration', { method: 'POST' });
+    }
+
+    async function skipCalibration() {
+      await fetch('/api/skip_calibration', { method: 'POST' });
+    }
+
     async function toggleWord(word) {
       if (selectedWords.includes(word)) {
         selectedWords = selectedWords.filter(w => w !== word);
@@ -244,16 +301,63 @@
       alert('EMERGENCY SOS DISPATCHED TO CAREGIVER');
     }
 
-    // Telemetry polling from Python backend
+    // Live AI Telemetry & Calibration Polling from Python Backend
     setInterval(async () => {
       try {
         const res = await fetch('/api/telemetry');
         const tel = await res.json();
+
+        // Update telemetry pills
         document.getElementById('gesture-text').textContent = tel.active_gesture || 'TRACKING GAZE...';
         document.getElementById('coords-text').textContent = `X:${tel.screen_x.toFixed(2)} Y:${tel.screen_y.toFixed(2)}`;
-        
-        // Quadrant highlight on dashboard
-        if (currentRoute === '/dashboard') {
+
+        // Calibration overlay state machine
+        const overlay = document.getElementById('calibration-overlay');
+        const setupCard = document.getElementById('calib-setup-card');
+        const targetDot = document.getElementById('calib-target');
+        const instruction = document.getElementById('calib-instruction');
+        const phasePill = document.getElementById('calib-phase-pill');
+        const errorBanner = document.getElementById('calib-error-banner');
+
+        if (tel.calib_error) {
+          errorBanner.classList.remove('hidden');
+          document.getElementById('calib-error-text').textContent = tel.calib_error;
+        } else {
+          errorBanner.classList.add('hidden');
+        }
+
+        if (tel.calib_phase === 'DONE') {
+          overlay.classList.add('hidden');
+        } else {
+          overlay.classList.remove('hidden');
+
+          if (tel.calib_phase === 'SETUP') {
+            setupCard.classList.remove('hidden');
+            targetDot.classList.add('hidden');
+            instruction.classList.add('hidden');
+            overlay.className = 'fixed inset-0 z-[2000] flex flex-col items-center justify-center transition-colors duration-700 bg-slate-900/60 backdrop-blur-md';
+          } else {
+            setupCard.classList.add('hidden');
+            targetDot.classList.remove('hidden');
+            instruction.classList.remove('hidden');
+
+            const isDark = tel.calib_phase === 'CALIBRATING_DARK';
+            overlay.className = isDark 
+              ? 'fixed inset-0 z-[2000] flex flex-col items-center justify-center transition-colors duration-700 bg-black text-white' 
+              : 'fixed inset-0 z-[2000] flex flex-col items-center justify-center transition-colors duration-700 bg-white text-slate-900';
+
+            // Move the calibration dot
+            targetDot.style.top = tel.calib_top || '50%';
+            targetDot.style.left = tel.calib_left || '50%';
+
+            // Update text at bottom (e.g. 4. LOOK BOTTOM RIGHT (Phase: Light Mode))
+            instruction.childNodes[0].nodeValue = (tel.calib_label || 'LOOK AT TARGET') + ' ';
+            phasePill.textContent = `(Phase: ${isDark ? 'Dark Mode' : 'Light Mode'})`;
+          }
+        }
+
+        // Quadrant highlight on dashboard when calibrated
+        if (currentRoute === '/dashboard' && tel.calib_phase === 'DONE') {
           let q = 0;
           if (tel.screen_x >= 0.5 && tel.screen_y < 0.5) q = 1;
           else if (tel.screen_x < 0.5 && tel.screen_y >= 0.5) q = 2;
@@ -271,7 +375,7 @@
           }
         }
       } catch (e) {}
-    }, 250);
+    }, 200);
   </script>
 </body>
 </html>
