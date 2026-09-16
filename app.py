@@ -1,4 +1,4 @@
-from flask import Flask, Response, jsonify, request, render_template, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 from flask_cors import CORS
 import cv2
 import os
@@ -7,7 +7,8 @@ from optics_engine import NitrivaOpticsEngine
 from sentence_generator import NitrivaSentenceSynthesizer
 from tts_engine import NitrivaVoiceEngine
 
-app = Flask(__name__, template_folder="templates", static_folder=".")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app = Flask(__name__, static_folder=BASE_DIR)
 CORS(app)
 
 engine = NitrivaOpticsEngine(camera_index=0)
@@ -16,7 +17,7 @@ voice = NitrivaVoiceEngine()
 
 # Global state
 app_state = {
-    "isLoggedIn": True,
+    "isLoggedIn": False,
     "route": "/dashboard",
     "devices": {"light": False, "ac": False, "tv": False},
     "selectedKeywords": [],
@@ -50,21 +51,18 @@ def get_telemetry():
 
 @app.route("/api/start_calibration", methods=["POST"])
 def start_calibration():
-    """Triggers the dual-phase 5-point calibration."""
     engine.start_calibration()
     voice.speak("Starting optics calibration. Look at the green target dots.")
     return jsonify({"status": "started", "calib_phase": engine.calib_phase})
 
 @app.route("/api/skip_calibration", methods=["POST"])
 def skip_calibration():
-    """Skips calibration and enables default tracking."""
     engine.skip_calibration()
     voice.speak("Calibration skipped. Tracking ready.")
     return jsonify({"status": "skipped", "calib_phase": engine.calib_phase})
 
 @app.route("/api/synthesize", methods=["POST"])
 def synthesize():
-    """AI natural language contextual sentence generator."""
     data = request.json or {}
     keywords = data.get("keywords", [])
     sentence = synthesizer.generate(keywords)
@@ -90,19 +88,31 @@ def toggle_device():
         voice.speak(f"Smart {device.upper()} {status}")
     return jsonify(app_state["devices"])
 
+@app.route("/assets/<path:path>")
+def serve_assets(path):
+    assets_dir = os.path.join(BASE_DIR, "assets")
+    return send_from_directory(assets_dir, path)
+
 @app.route("/favicon.svg")
 def favicon():
-    return send_from_directory(".", "favicon.svg")
+    return send_from_directory(BASE_DIR, "favicon.svg")
 
-@app.route("/")
+@app.route("/face_landmarker.task")
+def serve_model():
+    return send_from_directory(BASE_DIR, "face_landmarker.task")
+
+@app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
-def serve_index(path=""):
-    return render_template("index.html")
+def serve_index(path):
+    # Single-page application route fallback
+    file_path = os.path.join(BASE_DIR, path)
+    if path and os.path.exists(file_path) and os.path.isfile(file_path):
+        return send_from_directory(BASE_DIR, path)
+    return send_from_directory(BASE_DIR, "index.html")
 
 if __name__ == "__main__":
     print("=" * 60)
-    print(" Nitriva Python AI/ML Core Server")
+    print(" Nitriva Python AI/ML Server (Exact NayanVaani Engine)")
     print(" Running at: http://localhost:5000")
-    print(" OpenCV & MediaPipe Computer Vision: ACTIVE")
     print("=" * 60)
     app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
