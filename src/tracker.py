@@ -8,7 +8,8 @@ import os
 import time
 import math
 import threading
-from typing import Dict, Any, Optional, Tuple
+import base64
+from typing import Dict, Any, Optional, Tuple, Union
 
 import cv2
 import numpy as np
@@ -89,25 +90,72 @@ class EyeTracker:
             print(f"[Tracker] Error initializing FaceLandmarker: {e}")
 
     def start_camera(self):
-        """Start the webcam capture thread."""
+        """Start the webcam capture thread (supports local camera and cloud headless mode)."""
         with self.lock:
             if self.is_running:
                 return
 
-            self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
-            if not self.cap.isOpened():
-                self.cap = cv2.VideoCapture(self.camera_index)
+            try:
+                if os.name == "nt":
+                    self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+                else:
+                    self.cap = cv2.VideoCapture(self.camera_index)
 
-            if not self.cap.isOpened():
-                print(f"[Tracker] Camera index {self.camera_index} not available. Entering synthetic fallback mode.")
+                if not self.cap or not self.cap.isOpened():
+                    self.cap = cv2.VideoCapture(self.camera_index)
+
+                if not self.cap or not self.cap.isOpened():
+                    print(f"[Tracker] Local hardware camera not found (normal in Cloud Deployment). Client browser webcam mode active.")
+                    self.simulation_mode = True
+                else:
+                    self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                    self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                    self.cap.set(cv2.CAP_PROP_FPS, 30)
+            except Exception as e:
+                print(f"[Tracker] Camera initialization note: {e}")
                 self.simulation_mode = True
-            else:
-                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                self.cap.set(cv2.CAP_PROP_FPS, 30)
 
             self.is_running = True
             threading.Thread(target=self._capture_loop, daemon=True).start()
+
+    def process_client_frame(self, frame_bytes_or_b64: Union[bytes, str]) -> Dict[str, Any]:
+        """
+        Process a video frame received from a client browser (used in Cloud Deployment).
+        Supports raw JPEG/PNG bytes or base64 data URLs.
+        """
+        try:
+            if isinstance(frame_bytes_or_b64, str):
+                if "," in frame_bytes_or_b64:
+                    frame_bytes_or_b64 = frame_bytes_or_b64.split(",", 1)[1]
+                frame_bytes = base64.b64decode(frame_bytes_or_b64)
+            else:
+                frame_bytes = frame_bytes_or_b64
+
+            nparr = np.frombuffer(frame_bytes, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if frame is None:
+                return self.get_telemetry()
+
+            # Flip horizontally to match mirror preview
+            frame = cv2.flip(frame, 1)
+
+            now = time.time()
+            dt = now - self.prev_frame_time
+            if dt > 0:
+                self.fps = 0.9 * self.fps + 0.1 * (1.0 / dt)
+            self.prev_frame_time = now
+
+            if self.detector is not None:
+                self._process_frame_ml(frame, now)
+
+            # Update Optics Sensor current frame with reticle overlay
+            self._render_optics_overlay(frame)
+            with self.lock:
+                self.current_frame = frame
+
+            return self.get_telemetry()
+        except Exception:
+            return self.get_telemetry()
 
     def stop_camera(self):
         """Stop camera capture."""

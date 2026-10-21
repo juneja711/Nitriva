@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Nitriva</title>
-  <link rel="stylesheet" href="/static/style.css?v=5">
+  <link rel="stylesheet" href="/static/style.css?v=6">
 </head>
 <body>
 
@@ -55,7 +55,8 @@
         </div>
 
         <div class="optics-video-container">
-          <img src="/video_feed" alt="Optics Feed" class="optics-video">
+          <img src="/video_feed" alt="Optics Feed" class="optics-video" id="opticsImage">
+          <video id="opticsVideo" class="optics-video" autoplay playsinline muted style="display: none;"></video>
         </div>
 
         <div class="optics-status-pill" id="opticsStatusPill">
@@ -313,7 +314,8 @@
   <div class="setup-screen" id="setupScreen" style="display: none;">
     <div class="setup-card">
       <div class="setup-avatar-preview">
-        <img src="/video_feed" alt="Camera Face Alignment">
+        <img src="/video_feed" alt="Camera Face Alignment" id="setupImage">
+        <video id="setupVideo" autoplay playsinline muted style="display: none; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1);"></video>
       </div>
       <h2 class="setup-title">Patient Setup</h2>
       <p class="setup-desc">Position your face clearly in the camera frame above.<br>Keep your head completely still for 100% precision.</p>
@@ -336,6 +338,6 @@
     <button class="sos-dismiss-btn" onclick="dismissSOS()">Dismiss Alert (2 Blinks)</button>
   </div>
 
-  <script src="/static/app.js?v=5"></script>
+  <script src="/static/app.js?v=6"></script>
 </body>
 </html>

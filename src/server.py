@@ -10,7 +10,7 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -102,19 +102,67 @@ def video_feed():
 
 @app.websocket("/ws/telemetry")
 async def websocket_telemetry(websocket: WebSocket):
-    """Real-time bi-directional telemetry connection at ~30 FPS."""
+    """Real-time bi-directional telemetry connection supporting local camera and cloud browser webcam modes."""
     await websocket.accept()
-    try:
-        while True:
-            data = tracker.get_telemetry()
-            data["devices"] = active_devices
-            data["sos_active"] = sos_state["active"]
-            await websocket.send_json(data)
-            await asyncio.sleep(0.033)
-    except WebSocketDisconnect:
-        pass
-    except Exception as e:
-        print(f"[WebSocket] Error: {e}")
+
+    async def receive_loop():
+        try:
+            while True:
+                msg = await websocket.receive()
+                if "bytes" in msg and msg["bytes"]:
+                    data = tracker.process_client_frame(msg["bytes"])
+                    data["devices"] = active_devices
+                    data["sos_active"] = sos_state["active"]
+                    await websocket.send_json(data)
+                elif "text" in msg and msg["text"]:
+                    try:
+                        parsed = json.loads(msg["text"])
+                        if isinstance(parsed, dict) and parsed.get("type") == "frame":
+                            data = tracker.process_client_frame(parsed.get("data", ""))
+                            data["devices"] = active_devices
+                            data["sos_active"] = sos_state["active"]
+                            await websocket.send_json(data)
+                    except Exception:
+                        pass
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            print(f"[WebSocket Rx] Error: {e}")
+
+    async def broadcast_loop():
+        try:
+            while True:
+                # If local hardware camera is active, broadcast continuous telemetry at ~30 FPS
+                if not tracker.simulation_mode:
+                    data = tracker.get_telemetry()
+                    data["devices"] = active_devices
+                    data["sos_active"] = sos_state["active"]
+                    await websocket.send_json(data)
+                await asyncio.sleep(0.033)
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            print(f"[WebSocket Tx] Error: {e}")
+
+    rx_task = asyncio.create_task(receive_loop())
+    tx_task = asyncio.create_task(broadcast_loop())
+
+    done, pending = await asyncio.wait(
+        [rx_task, tx_task],
+        return_when=asyncio.FIRST_COMPLETED
+    )
+    for task in pending:
+        task.cancel()
+
+
+@app.post("/api/process_frame")
+async def api_process_frame(req: Request):
+    """Fallback HTTP endpoint for processing a single client browser video frame."""
+    body = await req.body()
+    data = tracker.process_client_frame(body)
+    data["devices"] = active_devices
+    data["sos_active"] = sos_state["active"]
+    return data
 
 
 @app.post("/api/login")

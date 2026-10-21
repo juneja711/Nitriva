@@ -23,6 +23,73 @@ const state = {
 
 // WebSocket Connection
 let socket = null;
+let localMediaStream = null;
+let isCloudWebcamActive = false;
+let frameStreamCanvas = null;
+let frameStreamInterval = null;
+
+async function initBrowserCamera() {
+  if (localMediaStream) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    console.log("[Nitriva Camera] getUserMedia not supported in this environment.");
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
+      audio: false
+    });
+    localMediaStream = stream;
+    isCloudWebcamActive = true;
+
+    // Attach stream to opticsVideo
+    const opticsVideo = document.getElementById("opticsVideo");
+    const opticsImage = document.getElementById("opticsImage");
+    if (opticsVideo) {
+      opticsVideo.srcObject = stream;
+      opticsVideo.style.display = "block";
+      if (opticsImage) opticsImage.style.display = "none";
+    }
+
+    // Attach stream to setupVideo
+    const setupVideo = document.getElementById("setupVideo");
+    const setupImage = document.getElementById("setupImage");
+    if (setupVideo) {
+      setupVideo.srcObject = stream;
+      setupVideo.style.display = "block";
+      if (setupImage) setupImage.style.display = "none";
+    }
+
+    // Start streaming frames to backend over WebSocket at ~22 FPS
+    startFrameStreaming(setupVideo || opticsVideo);
+    console.log("[Nitriva Camera] Browser webcam stream active for cloud deployment.");
+  } catch (err) {
+    console.log("[Nitriva Camera] Browser camera initialization note:", err);
+  }
+}
+
+function startFrameStreaming(videoElement) {
+  if (frameStreamInterval) clearInterval(frameStreamInterval);
+  if (!frameStreamCanvas) {
+    frameStreamCanvas = document.createElement("canvas");
+    frameStreamCanvas.width = 320;
+    frameStreamCanvas.height = 240;
+  }
+  const ctx = frameStreamCanvas.getContext("2d");
+
+  frameStreamInterval = setInterval(() => {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    const v = (document.getElementById("setupVideo")?.videoWidth > 0)
+      ? document.getElementById("setupVideo")
+      : document.getElementById("opticsVideo");
+    if (!v || v.videoWidth === 0) return;
+
+    ctx.drawImage(v, 0, 0, 320, 240);
+    const dataUrl = frameStreamCanvas.toDataURL("image/jpeg", 0.60);
+    socket.send(JSON.stringify({ type: "frame", data: dataUrl }));
+  }, 45); // ~22 FPS streaming
+}
 
 function initWebSocket() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -364,6 +431,9 @@ function handleLogin() {
 
   state.isLoggedIn = true;
   playSoftBeep(650, 0.08);
+
+  // Initialize client camera (seamless for cloud deployment)
+  initBrowserCamera();
 
   // Background API call
   fetch("/api/login", {
