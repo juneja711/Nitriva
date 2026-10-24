@@ -43,12 +43,20 @@ async function initBrowserCamera() {
     localMediaStream = stream;
     isCloudWebcamActive = true;
 
+    // Attach to permanent offscreen video (guaranteed uninterrupted stream across all views)
+    const captureVideo = document.getElementById("webcamCaptureVideo");
+    if (captureVideo) {
+      captureVideo.srcObject = stream;
+      captureVideo.play().catch(() => {});
+    }
+
     // Attach stream to opticsVideo
     const opticsVideo = document.getElementById("opticsVideo");
     const opticsImage = document.getElementById("opticsImage");
     if (opticsVideo) {
       opticsVideo.srcObject = stream;
       opticsVideo.style.display = "block";
+      opticsVideo.play().catch(() => {});
       if (opticsImage) opticsImage.style.display = "none";
     }
 
@@ -58,18 +66,19 @@ async function initBrowserCamera() {
     if (setupVideo) {
       setupVideo.srcObject = stream;
       setupVideo.style.display = "block";
+      setupVideo.play().catch(() => {});
       if (setupImage) setupImage.style.display = "none";
     }
 
-    // Start streaming frames to backend over WebSocket at ~22 FPS
-    startFrameStreaming(setupVideo || opticsVideo);
+    // Start streaming frames to backend over WebSocket at ~20 FPS with backpressure control
+    startFrameStreaming();
     console.log("[Nitriva Camera] Browser webcam stream active for cloud deployment.");
   } catch (err) {
     console.log("[Nitriva Camera] Browser camera initialization note:", err);
   }
 }
 
-function startFrameStreaming(videoElement) {
+function startFrameStreaming() {
   if (frameStreamInterval) clearInterval(frameStreamInterval);
   if (!frameStreamCanvas) {
     frameStreamCanvas = document.createElement("canvas");
@@ -80,15 +89,19 @@ function startFrameStreaming(videoElement) {
 
   frameStreamInterval = setInterval(() => {
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    const v = (document.getElementById("setupVideo")?.videoWidth > 0)
-      ? document.getElementById("setupVideo")
-      : document.getElementById("opticsVideo");
+
+    // Backpressure check: Skip frame if previous WebSocket packet is still in flight (prevents latency buildup!)
+    if (socket.bufferedAmount > 24000) return;
+
+    const v = document.getElementById("webcamCaptureVideo") ||
+              ((document.getElementById("setupVideo")?.videoWidth > 0) ? document.getElementById("setupVideo") : null) ||
+              document.getElementById("opticsVideo");
     if (!v || v.videoWidth === 0) return;
 
     ctx.drawImage(v, 0, 0, 320, 240);
-    const dataUrl = frameStreamCanvas.toDataURL("image/jpeg", 0.60);
+    const dataUrl = frameStreamCanvas.toDataURL("image/jpeg", 0.55);
     socket.send(JSON.stringify({ type: "frame", data: dataUrl }));
-  }, 45); // ~22 FPS streaming
+  }, 50); // ~20 FPS streaming with zero backpressure latency
 }
 
 function initWebSocket() {
@@ -171,6 +184,10 @@ function getClosestInteractiveTarget(normX, normY) {
     activeContainer = document.getElementById("communicationContent");
   } else if (state.currentView === "devices") {
     activeContainer = document.getElementById("devicesContent");
+  } else if (state.currentView === "setup") {
+    activeContainer = document.getElementById("setupScreen");
+  } else if (state.currentView === "login") {
+    activeContainer = document.getElementById("loginScreen");
   }
 
   if (!activeContainer) return null;
@@ -198,8 +215,8 @@ function getClosestInteractiveTarget(normX, normY) {
 }
 
 function updateGazeCursor(normX, normY) {
-  // During calibration or setup, skip normal module gaze focus
-  if (state.currentView === "calibration" || state.currentView === "login" || state.currentView === "setup") {
+  // During calibration dot phase, skip normal module gaze focus
+  if (state.currentView === "calibration") {
     return;
   }
 
@@ -287,9 +304,9 @@ function updateGazeCursor(normX, normY) {
 function handleGazeEvent(eventCode) {
   console.log("[Nitriva Event]", eventCode);
 
-  if (eventCode === "WINK_LEFT" || eventCode === "SELECT") {
-    // Activate currently focused interactive card/button with visual confirmation
-    let target = state.lastFocusedElement || currentFocusedElement || candidateElement;
+  if (eventCode === "WINK_LEFT" || eventCode === "WINK_RIGHT" || eventCode === "SELECT") {
+    // Activate currently focused interactive card/button with green visual confirmation pulse
+    let target = currentFocusedElement || state.lastFocusedElement || candidateElement;
     if (!target) {
       target = getClosestInteractiveTarget(state.gaze.x, state.gaze.y);
     }
@@ -298,25 +315,8 @@ function handleGazeEvent(eventCode) {
       target.classList.add("wink-pulse");
       setTimeout(() => {
         target.classList.remove("wink-pulse");
-      }, 250);
+      }, 350);
       triggerElementAction(target);
-    }
-  } else if (eventCode === "WINK_RIGHT" || eventCode === "CLEAR") {
-    if (state.currentView === "communication") {
-      clearKeywords();
-    } else {
-      // On dashboard or devices, allow right wink to also select focused card
-      let target = state.lastFocusedElement || currentFocusedElement || candidateElement;
-      if (!target) {
-        target = getClosestInteractiveTarget(state.gaze.x, state.gaze.y);
-      }
-      if (target) {
-        target.classList.add("wink-pulse");
-        setTimeout(() => {
-          target.classList.remove("wink-pulse");
-        }, 250);
-        triggerElementAction(target);
-      }
     }
   } else if (eventCode === "DOUBLE_BLINK") {
     // 2 Blinks = Back Navigation
@@ -801,6 +801,7 @@ window.addEventListener("click", (e) => {
 window.addEventListener("DOMContentLoaded", () => {
   initWebSocket();
   switchView("login");
+  initBrowserCamera();
 
   // Fetch initial devices state
   fetch("/api/devices")

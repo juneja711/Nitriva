@@ -69,6 +69,7 @@ class EyeTracker:
         self.current_frame = None
         self.simulation_mode = False
         self.simulated_gaze: Optional[Tuple[float, float]] = None
+        self.last_client_frame_time = 0.0
 
     def _init_detector(self):
         """Initialize MediaPipe FaceLandmarker with blendshapes."""
@@ -140,6 +141,7 @@ class EyeTracker:
             frame = cv2.flip(frame, 1)
 
             now = time.time()
+            self.last_client_frame_time = now
             dt = now - self.prev_frame_time
             if dt > 0:
                 self.fps = 0.9 * self.fps + 0.1 * (1.0 / dt)
@@ -204,6 +206,12 @@ class EyeTracker:
     def _capture_loop(self):
         """Continuous frame processing loop."""
         while self.is_running:
+            now = time.time()
+            # If client browser frames are actively streaming, don't overwrite with synthetic loop
+            if (self.cap is None or not self.cap.isOpened()) and (now - self.last_client_frame_time < 4.0):
+                time.sleep(0.04)
+                continue
+
             raw_frame = None
             if self.cap and self.cap.isOpened():
                 ret, raw_frame = self.cap.read()
@@ -218,6 +226,7 @@ class EyeTracker:
                 use_synthetic = False
 
             now = time.time()
+            self.last_client_frame_time = now
             dt = now - self.prev_frame_time
             if dt > 0:
                 self.fps = 0.9 * self.fps + 0.1 * (1.0 / dt)
@@ -261,8 +270,11 @@ class EyeTracker:
             for b in result.face_blendshapes[0]:
                 shapes[b.category_name] = b.score
 
-        self.blink_left = shapes.get("eyeBlinkLeft", 0.0)
-        self.blink_right = shapes.get("eyeBlinkRight", 0.0)
+        # In horizontally mirrored selfie view (cv2.flip), the user's physical left eye
+        # is positioned on the left of the image, which 3D FaceLandmarker interprets as "eyeBlinkRight".
+        # Therefore, we map the patient's physical left eye to eyeBlinkRight for 100% natural winking!
+        self.blink_left = float(shapes.get("eyeBlinkRight", 0.0))
+        self.blink_right = float(shapes.get("eyeBlinkLeft", 0.0))
 
         look_in_l = shapes.get("eyeLookInLeft", 0.0)
         look_out_l = shapes.get("eyeLookOutLeft", 0.0)
@@ -377,9 +389,9 @@ class EyeTracker:
         diff_lr = self.blink_left - self.blink_right
         diff_rl = self.blink_right - self.blink_left
 
-        both_closed = (self.blink_left >= 0.40 and self.blink_right >= 0.40 and abs(diff_lr) < 0.20)
-        left_wink = (self.blink_left >= 0.36 and diff_lr >= 0.15 and self.blink_right < 0.48)
-        right_wink = (self.blink_right >= 0.36 and diff_rl >= 0.15 and self.blink_left < 0.48)
+        both_closed = (self.blink_left >= 0.38 and self.blink_right >= 0.38 and abs(diff_lr) < 0.22)
+        left_wink = (self.blink_left >= 0.34 and diff_lr >= 0.12 and self.blink_right < 0.50)
+        right_wink = (self.blink_right >= 0.34 and diff_rl >= 0.12 and self.blink_left < 0.50)
 
         # Multi-blink counting
         if both_closed:
@@ -414,26 +426,22 @@ class EyeTracker:
                 self.blink_state_text = "TRACKING ACTIVE"
 
         # Left Wink Detection (Select)
-        if left_wink and (now - self.last_event_time > 0.38):
-            if self.wink_left_start_time == 0.0:
-                self.wink_left_start_time = now
-            elif (now - self.wink_left_start_time >= 0.08) and not self.wink_left_active:
+        if left_wink and (now - self.last_event_time > 0.35):
+            if not self.wink_left_active:
                 self.wink_left_active = True
                 self._trigger_event("WINK_LEFT", "WINK LEFT (SELECT)")
                 self.last_event_time = now
-        elif self.blink_left < 0.28:
+        elif self.blink_left < 0.25:
             self.wink_left_start_time = 0.0
             self.wink_left_active = False
 
-        # Right Wink Detection (Clear / Alternate Select)
-        if right_wink and (now - self.last_event_time > 0.38):
-            if self.wink_right_start_time == 0.0:
-                self.wink_right_start_time = now
-            elif (now - self.wink_right_start_time >= 0.08) and not self.wink_right_active:
+        # Right Wink Detection (Select / Alternate)
+        if right_wink and (now - self.last_event_time > 0.35):
+            if not self.wink_right_active:
                 self.wink_right_active = True
-                self._trigger_event("WINK_RIGHT", "WINK RIGHT (CLEAR)")
+                self._trigger_event("WINK_RIGHT", "WINK (SELECT)")
                 self.last_event_time = now
-        elif self.blink_right < 0.28:
+        elif self.blink_right < 0.25:
             self.wink_right_start_time = 0.0
             self.wink_right_active = False
 

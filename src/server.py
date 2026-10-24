@@ -104,13 +104,14 @@ def video_feed():
 async def websocket_telemetry(websocket: WebSocket):
     """Real-time bi-directional telemetry connection supporting local camera and cloud browser webcam modes."""
     await websocket.accept()
+    loop = asyncio.get_running_loop()
 
     async def receive_loop():
         try:
             while True:
                 msg = await websocket.receive()
                 if "bytes" in msg and msg["bytes"]:
-                    data = tracker.process_client_frame(msg["bytes"])
+                    data = await loop.run_in_executor(None, tracker.process_client_frame, msg["bytes"])
                     data["devices"] = active_devices
                     data["sos_active"] = sos_state["active"]
                     await websocket.send_json(data)
@@ -118,7 +119,8 @@ async def websocket_telemetry(websocket: WebSocket):
                     try:
                         parsed = json.loads(msg["text"])
                         if isinstance(parsed, dict) and parsed.get("type") == "frame":
-                            data = tracker.process_client_frame(parsed.get("data", ""))
+                            frame_raw = parsed.get("data", "")
+                            data = await loop.run_in_executor(None, tracker.process_client_frame, frame_raw)
                             data["devices"] = active_devices
                             data["sos_active"] = sos_state["active"]
                             await websocket.send_json(data)
@@ -132,8 +134,10 @@ async def websocket_telemetry(websocket: WebSocket):
     async def broadcast_loop():
         try:
             while True:
-                # If local hardware camera is active, broadcast continuous telemetry at ~30 FPS
-                if not tracker.simulation_mode:
+                # If local hardware camera is active and no client stream is overriding, broadcast continuous telemetry
+                now = asyncio.get_event_loop().time()
+                is_client_active = (time.time() - tracker.last_client_frame_time < 3.0)
+                if not tracker.simulation_mode and not is_client_active:
                     data = tracker.get_telemetry()
                     data["devices"] = active_devices
                     data["sos_active"] = sos_state["active"]
