@@ -23,6 +23,8 @@ from src.nlp_engine import nlp_engine
 # Paths
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
+ASSETS_DIR = os.path.join(BASE_DIR, "assets")
+INDEX_FILE = os.path.join(BASE_DIR, "index.html")
 
 # State
 active_devices = {
@@ -60,8 +62,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount assets folder (Nayan Vaani Vite React build)
+if os.path.exists(ASSETS_DIR):
+    app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+
 # Mount static folder
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+@app.get("/favicon.svg")
+async def favicon():
+    fav_file = os.path.join(BASE_DIR, "favicon.svg")
+    if os.path.exists(fav_file):
+        return FileResponse(fav_file, media_type="image/svg+xml")
+    raise HTTPException(status_code=404)
 
 
 # Pydantic Schemas
@@ -85,10 +98,19 @@ class SimulateRequest(BaseModel):
 
 
 @app.get("/")
+@app.get("/login")
+@app.get("/setup")
+@app.get("/calibration")
+@app.get("/dashboard")
+@app.get("/communication")
+@app.get("/control")
+@app.get("/sos")
+@app.get("/settings")
 async def root():
-    """Serve main Nitriva application."""
-    index_file = os.path.join(STATIC_DIR, "index.html")
-    return FileResponse(index_file)
+    """Serve main Nitriva application (exact Nayan Vaani Vite/React SPA engine)."""
+    if os.path.exists(INDEX_FILE):
+        return FileResponse(INDEX_FILE)
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 
 @app.get("/video_feed")
@@ -241,3 +263,14 @@ async def simulate_action(req: SimulateRequest):
         tracker.gaze_x = req.gaze_x
         tracker.gaze_y = req.gaze_y
     return {"status": "ok"}
+
+
+@app.get("/{full_path:path}")
+async def serve_spa_fallback(full_path: str):
+    """Catch-all fallback route for client-side routing and static assets."""
+    target_file = os.path.join(BASE_DIR, full_path)
+    if os.path.isfile(target_file):
+        return FileResponse(target_file)
+    if os.path.exists(INDEX_FILE):
+        return FileResponse(INDEX_FILE)
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
